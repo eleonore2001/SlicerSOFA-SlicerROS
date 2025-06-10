@@ -58,14 +58,13 @@ class DeformationManager:
     
  
     def initialize_deformation_system(self, initial_deformation_array, initial_positions_array):
-        """Initialise le système de déformation une seule fois."""
+        #Initialise the deformation system, is to be called just once 
         
         roi_markup_node = slicer.util.getNode("R")
         target_node = slicer.util.getNode("liver")
         
-        print("Initialisation du système de déformation...")
+        print("Initialising...")
         
-        # 1. Créer la structure de données source (réutilisable)
         self.points = vtk.vtkPoints()
         self.vectors = vtk.vtkFloatArray()
         self.vectors.SetNumberOfComponents(3)
@@ -73,20 +72,20 @@ class DeformationManager:
         
         num_points = initial_deformation_array.shape[0]
         
-        # Initialiser avec les données initiales
+        #Fill the vtk type data
         for i in range(num_points):
             x, y, z = initial_positions_array[i]
             self.points.InsertNextPoint(x, y, z)
             dx, dy, dz = initial_deformation_array[i]
             self.vectors.InsertNextTuple([dx, dy, dz])
         
-        # Créer l'unstructured grid source (réutilisable)
+        #Create the PolyData
         self.source_data = vtk.vtkPolyData()
         self.source_data.SetPoints(self.points)
         self.source_data.GetPointData().SetVectors(self.vectors)
         self.source_data.GetPointData().SetActiveVectors("Displacement")
 
-        # 2. Créer la grille de destination (fixe)
+        # Create the probe grid according to the ROI dimension
         roi_bounds = [0] * 6
         roi_markup_node.GetRASBounds(roi_bounds)
         
@@ -103,50 +102,45 @@ class DeformationManager:
             int(roi_size[2] / grid_spacing[2]) + 1
         ]
         
-        bounds = [0, 0, 0, 0, 0, 0]
-        self.source_data.GetBounds(bounds)
-        print(f"BORNES des points source: {bounds}")
-        print(f"BORNES du ROI: {roi_bounds}")
-        # Créer la grille de probe (fixe)
+
         probe_grid = vtk.vtkImageData()
         probe_grid.SetDimensions(grid_dims)
         probe_grid.SetOrigin(roi_bounds[0], roi_bounds[2], roi_bounds[4])
         probe_grid.SetSpacing(grid_spacing)
         probe_grid.AllocateScalars(vtk.VTK_DOUBLE, 1)
         
-        # 3. Créer le ProbeFilter (réutilisable)
+        # Create the Point Interpolator 
         self.interpolator = vtk.vtkPointInterpolator()
         self.interpolator.SetInputData(probe_grid)
         self.interpolator.SetSourceData(self.source_data)
         
-        # Utiliser un kernel gaussien avec un rayon adaptatif
+        #Point Interpolator parameters
         gaussian_kernel = vtk.vtkGaussianKernel()
         gaussian_kernel.SetSharpness(2.0)  # Ajustez la netteté
         gaussian_kernel.SetRadius(10.0)    # Rayon d'influence
         
         self.interpolator.SetKernel(gaussian_kernel)
-        self.interpolator.SetLocator(vtk.vtkStaticPointLocator())  # Accélération
+        self.interpolator.SetLocator(vtk.vtkStaticPointLocator())  
         self.interpolator.Update()
 
         print("Source bounds:", self.source_data.GetBounds())
         print("Probe grid bounds:",self.interpolator.GetInput().GetBounds()) 
         
-        # 4. Récupérer les données interpolées
+        # Work with the output of Point Interpolator
         probed_grid = self.interpolator.GetOutput()
         probe_vtk_array = probed_grid.GetPointData().GetArray("Displacement")
         if probe_vtk_array is None:
             print("Erreur: Pas de données de déplacement dans la grille interpolée")
             return None
         
-        # Convertir en array NumPy
         probe_array = vtk.util.numpy_support.vtk_to_numpy(probe_vtk_array)
         print(np.max(probe_array))
 
-        # IMPORTANT: VTK utilise l'ordre (Z,Y,X) alors que nous définissons (X,Y,Z)
+        # IMPORTANT: VTK use (Z,Y,X) but we use  (X,Y,Z)
         probe_array_shape = (grid_dims[2], grid_dims[1], grid_dims[0], 3)  # (Z,Y,X,3)
         probe_array = probe_array.reshape(probe_array_shape)
                 
-        # 4. Créer le nœud de transformation (unique)
+        # Create the transform node
         self.transform_node = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLGridTransformNode")
         self.transform_node.SetName("OptimizedDeformation")
         
@@ -157,7 +151,6 @@ class DeformationManager:
         displacement_grid.SetSpacing(grid_spacing)
         displacement_grid.AllocateScalars(vtk.VTK_DOUBLE, 3)
         
-        # Configurer la transformation
         grid_transform = vtk.vtkGridTransform()
         grid_transform.SetDisplacementGridData(displacement_grid)
         grid_transform.SetInterpolationModeToLinear()
@@ -166,7 +159,6 @@ class DeformationManager:
         # Récupérer l'array de transformation (référence persistante)
         self.grid_array = slicer.util.arrayFromGridTransform(self.transform_node)
         
-        # 5. Appliquer à l'objet cible
         target_node.SetAndObserveTransformNodeID(self.transform_node.GetID())
         
         
@@ -176,7 +168,6 @@ class DeformationManager:
         self.update_deformation(initial_deformation_array, initial_positions_array)
         
     def update_deformation(self, deformation_array, positions_array):
-        """Met à jour rapidement la déformation avec de nouvelles données."""
         
         if not self.initialized:
             print("Erreur: Système non initialisé. Appelez initialize_deformation_system() d'abord.")
@@ -482,7 +473,6 @@ slidingPoint = needle.addSlidingPoints()
 # Start the volume definition
 # -----------------
 roiNode = slicer.util.getNode("R")  
-   # Récupération du centre et de la taille
 center = [0.0, 0.0, 0.0]
 roiNode.GetCenter(center)
 
@@ -491,7 +481,6 @@ radius = [0,0,0]
 roiNode.GetXYZ(xyz)
 roiNode.GetRadiusXYZ(radius)
 
-# Calcul des points min et max (en coordonnées RAS)
 minPoint = [center[i] - radius[i] for i in range(3)]
 maxPoint = [center[i] + radius[i] for i in range(3)]
 minPoint2= " ".join(f"{v:.2f}" for v in minPoint)
