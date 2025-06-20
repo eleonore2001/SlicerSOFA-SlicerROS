@@ -40,6 +40,3 @@ sudo dpkg -i libncurses5_6.1+20181013-2+deb10u2_amd64.deb
 sudo apt install python3-vcstool python3-colcon-common-extensions python3-pykdl
 sudo apt install libxml2-dev libraw1394-dev libncurses5-dev qtcreator swig sox espeak cmake-curses-gui cmake-qt-gui git subversion gfortran libcppunit-dev libqt5xmlpatterns5-dev libbluetooth-dev libhidapi-dev python3-pyudev gfortran-9 ros-jazzy-joint-state-publisher* ros-jazzy-xacro
 ```
-
-
-
