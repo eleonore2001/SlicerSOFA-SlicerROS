@@ -4,13 +4,13 @@
  This repository contains 2 projects that demonstrate the pertinence and feasibility of the integration of 2 Slicer 3D extensions
 
 - The first one is the Slicer SOFA extension, developped by Rafael Palomar that enables the user to visualize object ( here, organs) deform according to physical constraints (here, the tip of a robot).
-- The second one is the Slicer ROS2 extension, developped by Laura Connoly, Anton Deguet and other (i guess, to check).
+- The second one is the Slicer ROS2 extension, developped by Laura Connoly,Aravind S. Kumar and Anton Deguet.
 
 To use these projects, you will need to build the Slicer ROS2 extension and download the Phantom Omni driver ( you can also use a pretend version). Thus, you need to build Slicer 3D from source. I used ROS2 Jazzy version. The whole setup has been tested and works fine with Ubuntu 24.04. It will not work on a virtual machine using a real Phantom Omni.
 
 Here are some important steps to be able to use it all :
 
-- When you build from source Slicer 3D, you should ~~not~~ download QT from their website but rather use the built in.
+- When you build from source Slicer 3D, you should NOT download QT from their website but rather use the built in.
 - That is the [repository](https://github.com/Slicer/SlicerSOFA.git) for the Slicer SOFA extension.
 - Follow this link to install ROS2 Jazzy : [ROS2 Jazzy extension](https://docs.ros.org/en/jazzy/Installation/Ubuntu-Install-Debs.html) .
 - Follow this link to install the Slicer ROS2 extension : [Slicer ROS2 installation doc](https://slicer-ros2.readthedocs.io/en/devel/pages/getting-started.html) .
