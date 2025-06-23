@@ -1,5 +1,20 @@
 # -*- coding: utf-8 -*-
 """Basic scene using Cosserat in SofaPython3.
+Cosserat Needle Simulation with Deformable Volume Interaction
+
+This module implements a SOFA-based simulation of a Cosserat needle interacting
+with a deformable FEM volume, integrated with 3D Slicer for visualization.
+
+Dependencies:
+- SOFA Framework
+- 3D Slicer
+- SlicerSOFA extension
+- PyVista (optional, for enhanced visualization)
+- NumPy
+- VTK
+
+Author: [Eleonore Germond]
+License: [MIT]
 
 Based on the work done with SofaPython. See POEMapping.py
 """
@@ -28,6 +43,9 @@ import Sofa.Core
 import Sofa.Simulation
 import sys
 sys.path.append('/home/slicer/SlicerSOFA/Release/SofaCosserat/examples/python3')
+sys.path.append('//home/slicer/SlicerSOFA-pieper/Experiments/liver-torus-probe')
+
+from deformation_manager import DeformationManager
 
 PYVISTA = True
 if PYVISTA:
@@ -44,177 +62,6 @@ from cosserat.needle.params import NeedleParameters, GeometryParams, PhysicsPara
 from cosserat.usefulFunctions import pluginList
 from cosserat.cosseratObject import Cosserat
 
-class DeformationManager:
-    
-    def __init__(self):
-        self.transform_node = None
-        self.grid_array = None
-        self.probe_filter = None
-        self.source_data = None
-        self.vectors = None
-        self.points = None
-        self.initialized = False
-        self.inProgress = False
-    
- 
-    def initialize_deformation_system(self, initial_deformation_array, initial_positions_array):
-        #Initialise the deformation system, is to be called just once 
-        
-        roi_markup_node = slicer.util.getNode("R")
-        target_node = slicer.util.getNode("liver")
-        
-        print("Initialising...")
-        
-        self.points = vtk.vtkPoints()
-        self.vectors = vtk.vtkFloatArray()
-        self.vectors.SetNumberOfComponents(3)
-        self.vectors.SetName("Displacement")
-        
-        num_points = initial_deformation_array.shape[0]
-        
-        #Fill the vtk type data
-        for i in range(num_points):
-            x, y, z = initial_positions_array[i]
-            self.points.InsertNextPoint(x, y, z)
-            dx, dy, dz = initial_deformation_array[i]
-            self.vectors.InsertNextTuple([dx, dy, dz])
-        
-        #Create the PolyData
-        self.source_data = vtk.vtkPolyData()
-        self.source_data.SetPoints(self.points)
-        self.source_data.GetPointData().SetVectors(self.vectors)
-        self.source_data.GetPointData().SetActiveVectors("Displacement")
-
-        # Create the probe grid according to the ROI dimension
-        roi_bounds = [0] * 6
-        roi_markup_node.GetRASBounds(roi_bounds)
-        
-        roi_size = [
-            roi_bounds[1] - roi_bounds[0],
-            roi_bounds[3] - roi_bounds[2], 
-            roi_bounds[5] - roi_bounds[4]
-        ]
-        min_size = min(roi_size)
-        grid_spacing = [min_size / 20.0] * 3
-        grid_dims = [
-            int(roi_size[0] / grid_spacing[0]) + 1,
-            int(roi_size[1] / grid_spacing[1]) + 1,
-            int(roi_size[2] / grid_spacing[2]) + 1
-        ]
-        
-
-        probe_grid = vtk.vtkImageData()
-        probe_grid.SetDimensions(grid_dims)
-        probe_grid.SetOrigin(roi_bounds[0], roi_bounds[2], roi_bounds[4])
-        probe_grid.SetSpacing(grid_spacing)
-        probe_grid.AllocateScalars(vtk.VTK_DOUBLE, 1)
-        
-        # Create the Point Interpolator 
-        self.interpolator = vtk.vtkPointInterpolator()
-        self.interpolator.SetInputData(probe_grid)
-        self.interpolator.SetSourceData(self.source_data)
-        
-        #Point Interpolator parameters
-        gaussian_kernel = vtk.vtkGaussianKernel()
-        gaussian_kernel.SetSharpness(2.0)  # Ajustez la netteté
-        gaussian_kernel.SetRadius(10.0)    # Rayon d'influence
-        
-        self.interpolator.SetKernel(gaussian_kernel)
-        self.interpolator.SetLocator(vtk.vtkStaticPointLocator())  
-        self.interpolator.Update()
-
-        print("Source bounds:", self.source_data.GetBounds())
-        print("Probe grid bounds:",self.interpolator.GetInput().GetBounds()) 
-        
-        # Work with the output of Point Interpolator
-        probed_grid = self.interpolator.GetOutput()
-        probe_vtk_array = probed_grid.GetPointData().GetArray("Displacement")
-        if probe_vtk_array is None:
-            print("Erreur: Pas de données de déplacement dans la grille interpolée")
-            return None
-        
-        probe_array = vtk.util.numpy_support.vtk_to_numpy(probe_vtk_array)
-        print(np.max(probe_array))
-
-        # IMPORTANT: VTK use (Z,Y,X) but we use  (X,Y,Z)
-        probe_array_shape = (grid_dims[2], grid_dims[1], grid_dims[0], 3)  # (Z,Y,X,3)
-        probe_array = probe_array.reshape(probe_array_shape)
-                
-        # Create the transform node
-        self.transform_node = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLGridTransformNode")
-        self.transform_node.SetName("OptimizedDeformation")
-        
-        # Créer la grille de déplacement avec les bonnes dimensions
-        displacement_grid = vtk.vtkImageData()
-        displacement_grid.SetDimensions(grid_dims)
-        displacement_grid.SetOrigin(roi_bounds[0], roi_bounds[2], roi_bounds[4])
-        displacement_grid.SetSpacing(grid_spacing)
-        displacement_grid.AllocateScalars(vtk.VTK_DOUBLE, 3)
-        
-        grid_transform = vtk.vtkGridTransform()
-        grid_transform.SetDisplacementGridData(displacement_grid)
-        grid_transform.SetInterpolationModeToLinear()
-        self.transform_node.SetAndObserveTransformFromParent(grid_transform)
-        
-        # Récupérer l'array de transformation (référence persistante)
-        self.grid_array = slicer.util.arrayFromGridTransform(self.transform_node)
-        
-        target_node.SetAndObserveTransformNodeID(self.transform_node.GetID())
-        
-        
-        print(f"Système initialisé !")
-        self.initialized = True
-        # Première mise à jour
-        self.update_deformation(initial_deformation_array, initial_positions_array)
-        
-    def update_deformation(self, deformation_array, positions_array):
-        
-        if not self.initialized:
-            print("Erreur: Système non initialisé. Appelez initialize_deformation_system() d'abord.")
-            return
-        
-        # 1. Mettre à jour uniquement les vecteurs dans la structure existante
-        num_points = deformation_array.shape[0]
-        
-        for i in range(num_points):
-            x, y, z = positions_array[i]
-            self.points.SetPoint(i, x, y, z)
-            dx, dy, dz = deformation_array[i]
-            self.vectors.SetTuple3(i, dx, dy, dz)
-        
-        # Marquer les données comme modifiées
-        self.vectors.Modified()
-        self.points.Modified()
-        self.source_data.Modified()
-       
-        # print(f"Max déplacement dans vector_array: {np.max(self.vectors)}")
-        # 2. Re-interpoler (rapide car structures déjà créées)
-        self.interpolator.Update()    
-        
-        # 3. Récupérer et appliquer les nouvelles données : it feels like the output of the probe filter is always nul but the data in entry is correct !
-        # probed_grid = self.probe_filter.GetOutput()
-        probed_grid = self.interpolator.GetOutput()  #probed_grid est un vtk image data
-        
-        # print(f"Premier tuple dans probed_grid: {probed_grid.GetPointData().GetVectors().GetTuple3(0)}")
-        # print(f"tuple random dans probed_grid: {probed_grid.GetPointData().GetVectors().GetTuple3(745)}")
-        probe_vtk_array = probed_grid.GetPointData().GetArray("Displacement")
-        print(f"Max déplacement dans grid_array: {np.max(probe_vtk_array)}")
-        print(f"Shape de grid_array: {np.shape(probe_vtk_array)}")
-        
-        if probe_vtk_array is not None:
-            probe_array = vtk.util.numpy_support.vtk_to_numpy(probe_vtk_array)
-            
-            # Reshape selon les conventions VTK (Z,Y,X,3)
-            grid_dims = self.grid_array.shape[:3]  # Récupérer les dimensions actuelles
-            probe_array_shape = (grid_dims[0], grid_dims[1], grid_dims[2], 3)
-            probe_array = probe_array.reshape(probe_array_shape)            
-            # Appliquer directement à la grille existante
-            self.grid_array[:] = -1.0 * probe_array
-            
-            slicer.util.arrayFromGridTransformModified(self.transform_node)
-            slicer.app.processEvents()
-
-
 def addConstraintPoint(parentNode, beamPath):
     constraintPointsNode = parentNode.addChild('constraintPoints')
     constraintPointsNode.addObject("PointSetTopologyContainer", name="constraintPtsContainer", listening="1")
@@ -222,13 +69,13 @@ def addConstraintPoint(parentNode, beamPath):
     constraintPointsNode.addObject("MechanicalObject", template="Vec3d", showObject=True, showIndices=True,
                                    name="constraintPointsMo", position=[], showObjectScale=0, listening="1")
 
-    # print(f' ====> The beamTip tip is : {dir(beamPath)}')
     constraintPointsNode.addObject('PointsManager', name="pointsManager", listening="1",
                                    beamPath="/solverNode/needle/rigidBase/cosseratInSofaFrameNode/slidingPoint"
                                             "/slidingPointMO")
 
     constraintPointsNode.addObject('BarycentricMapping', useRestPosition="false", listening="1")
     return constraintPointsNode
+
 def transformation_matrix_to_rigid3d(matrix):
     # Extract translation
     tx, ty, tz = matrix[0, 3], matrix[1, 3], matrix[2, 3]
@@ -359,10 +206,10 @@ def addDependencies(cubeNode):
         'CosseratNeedleSlidingConstraint', name="computeDistanceComponent")
     distanceStatsNode.addObject('DifferenceMultiMapping', name="pointsMulti", input1=inputVolumeMo, lastPointIsFixed=0,
                                 input2=inputNeedleMo, output=outputDistanceMo, direction="@../../FramesMO.position")
+
+
 rootNode = Sofa.Core.Node("root")
-
 params = NeedleParameters()
-
 nbFrames = GeometryParams.nbFrames
 needleGeometryConfig = {'init_pos': [0., 0., 0.], 'tot_length': GeometryParams.totalLength,
                         'nbSectionS': GeometryParams.nbSections, 'nbFramesF': nbFrames,
@@ -374,60 +221,16 @@ slicer.app.processEvents()
 slicer.app.layoutManager().setLayout(slicer.vtkMRMLLayoutNode.SlicerLayoutOneUp3DView)
 
 
+#This enables Slicer SOFA to have access the all the necessary plugin
 rootNode.addObject('RequiredPlugin', name='plugins', pluginName=[pluginList])
-
-plugin_list = [
+plugin_list_2 = [
     "MultiThreading",  # Needed to use components [ParallelBVHNarrowPhase,ParallelBruteForceBroadPhase]
-    "Sofa.Component.AnimationLoop",  # Needed to use components [FreeMotionAnimationLoop]
-    "Sofa.Component.Collision.Detection.Algorithm",  # Needed to use components [CollisionPipeline]
-    "Sofa.Component.Collision.Detection.Intersection",  # Needed to use components [MinProximityIntersection]
-    "Sofa.Component.Collision.Geometry",  # Needed to use components [TriangleCollisionModel]
-    "Sofa.Component.Collision.Response.Contact",  # Needed to use components [CollisionResponse]
-    "Sofa.Component.Constraint.Lagrangian.Correction",  # Needed to use components [LinearSolverConstraintCorrection]
-    "Sofa.Component.Constraint.Lagrangian.Solver",  # Needed to use components [GenericConstraintSolver]
-    "Sofa.Component.IO.Mesh",  # Needed to use components [MeshGmshLoader]
-    "Sofa.Component.LinearSolver.Direct",  # Needed to use components [SparseLDLSolver]
-    "Sofa.Component.Mass",  # Needed to use components [UniformMass]
-    "Sofa.Component.MechanicalLoad",  # Needed to use components [PlaneForceField]
-    "Sofa.Component.ODESolver.Backward",  # Needed to use components [EulerImplicitSolver]
-    "Sofa.Component.SolidMechanics.FEM.Elastic",  # Needed to use components [TetrahedralCorotationalFEMForceField]
-    "Sofa.Component.StateContainer",  # Needed to use components [MechanicalObject]
-    "Sofa.Component.Topology.Container.Dynamic",  # Needed to use components [HexahedronSetTopologyContainer,HexahedronSetTopologyModifier,TetrahedronSetTopology
-    "Sofa.Component.Topology.Mapping",  # Needed to use components [Tetra2TriangleTopologicalMapping]
-    "Sofa.Component.Visual",  # Needed to use components [VisualStyle]
     "Sofa.Component.Constraint.Projective",  # Needed to use components [FixedProjectiveConstraint]
-    "Sofa.Component.IO.Mesh",
-    "Sofa.Component.LinearSolver.Direct",
-    "Sofa.Component.LinearSolver.Iterative",
-    "Sofa.Component.Mapping.Linear",
-    "Sofa.Component.Mass",
-    "Sofa.Component.ODESolver.Backward",
-    "Sofa.Component.Setting",
-    "Sofa.Component.SolidMechanics.FEM.Elastic",
-    "Sofa.Component.StateContainer",
-    "Sofa.Component.Topology.Container.Dynamic",
-    "Sofa.Component.Visual",
-    "Sofa.GL.Component.Rendering3D",
-    "Sofa.Component.AnimationLoop",
-    "Sofa.Component.Collision.Detection.Algorithm",
-    "Sofa.Component.Collision.Detection.Intersection",
-    "Sofa.Component.Collision.Geometry",
-    "Sofa.Component.Collision.Response.Contact",
-    "Sofa.Component.Constraint.Lagrangian.Solver",
-    "Sofa.Component.Constraint.Lagrangian.Correction",
     "Sofa.Component.LinearSystem",
-    "Sofa.Component.MechanicalLoad",
-    "MultiThreading",
-    "Sofa.Component.SolidMechanics.Spring",
     "Sofa.Component.Constraint.Lagrangian.Model",
-    "Sofa.Component.Mapping.NonLinear",
     "Sofa.Component.Topology.Container.Constant",
-    "Sofa.Component.Topology.Mapping",
-    "Sofa.Component.Engine.Select",
-    "Sofa.Component.Constraint.Projective",
-    "Sofa.Component.Topology.Container.Grid"
 ]
-for plugin in plugin_list:
+for plugin in plugin_list_2:
     rootNode.addObject("RequiredPlugin", name=plugin)
 
 rootNode.addObject('VisualStyle', displayFlags='showVisualModels showBehaviorModels hideCollisionModels '
@@ -453,7 +256,6 @@ generic = rootNode.addObject('GenericConstraintSolver', tolerance="1e-20",
 gravity = [0, 0, 0]
 rootNode.gravity.value = gravity
 rootNode.dt = dt
-rootNode.addObject('BackgroundSetting', color='0 0.168627 0.211765')
 solverNode = rootNode.addChild('solverNode')
 solverNode.addObject('EulerImplicitSolver',
                         rayleighStiffness=PhysicsParams.rayleighStiffness)
@@ -465,13 +267,9 @@ needle = Cosserat(parent=solverNode, cosseratGeometry=needleGeometryConfig, radi
     rayleighStiffness=PhysicsParams.rayleighStiffness)
 needleCollisionModel = needle.addPointCollisionModel("needleCollision")
 
-# These state is mapped on the needle and used to compute the distance between the needle and the
-# FEM constraint points
 slidingPoint = needle.addSlidingPoints()
 
-# -----------------
-# Start the volume definition
-# -----------------
+# Start the FEM cube definition
 roiNode = slicer.util.getNode("R")  
 center = [0.0, 0.0, 0.0]
 roiNode.GetCenter(center)
@@ -489,57 +287,44 @@ maxPoint2= " ".join(f"{v:.2f}" for v in maxPoint)
 
 cubeNode = createFemCubeWithParams(rootNode, FemParams,minPoint2,maxPoint2)
 addDependencies(cubeNode)
-# FEM constraint points
-
 
 slicer.app.processEvents()
 Sofa.Simulation.init(rootNode)
 
-needle_positions_quat = rootNode.solverNode.needle.rigidBase.cosseratInSofaFrameNode.FramesMO.position.array()
-# needle_positions = needle_positions_quat[:, :3].copy()
-needle_positions = needle_positions_quat[:, :3]
-
-# Similarly you can access the topology of the object
+#Initialize the position of the needle and the cube 
+needle_positions_quat = rootNode.solverNode.needle.rigidBase.cosseratInSofaFrameNode.FramesMO.position.array()  #the position and orientation 
+needle_positions = needle_positions_quat[:, :3]  #just the position
 needle_points = rootNode.solverNode.needle.rigidBase.cosseratInSofaFrameNode.needleCollision.beamContainer.edges.array()
 
-# print(needle_points)
 cube_positions = rootNode.FemNode.gelNode.surfaceNode.msSurface.position.array()
 cube_points = rootNode.FemNode.gelNode.surfaceNode.surfContainer.triangles.array()
-# root.scene.liver.collision.TriangleSetTopologyContainer.triangles.array()
-if PYVISTA:
-    for position_array, triangle_array, color, name in zip([needle_positions], [needle_points], ["red"], ['needle']):
-        faces = np.hstack([[2, a, b] for a, b in triangle_array]).astype(np.uint64)
-        mesh = pv.PolyData()
-        mesh.points = position_array
-        mesh.lines = faces
-        plotter = pv.Plotter()
-        plotter.add_mesh(mesh, color="red", line_width=5, render_lines_as_tubes=True)
-        
-        modelNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLModelNode")
-        modelNode.SetName(name)
-        modelNode.CreateDefaultDisplayNodes()
-        modelNode.SetAndObservePolyData(mesh)
 
-if PYVISTA:
-    for position_array, triangle_array, color, name in zip([cube_positions], [cube_points], ["red"], ['cube']):
-        faces = np.zeros((triangle_array.shape[0], 4), dtype=np.uint64)
-        faces[:, 1:] = triangle_array
-        faces[:, 0] = 3
-        mesh = pv.PolyData(position_array, faces)
-        plotter.add_mesh(mesh, color=color, opacity=0.5, show_edges=True, lighting=True)
+#Create the visualization of the needle
+faces = np.hstack([[2, a, b] for a, b in needle_points]).astype(np.uint64)
+mesh = pv.PolyData()
+mesh.points = needle_positions
+mesh.lines = faces
+plotter = pv.Plotter()
+plotter.add_mesh(mesh, color="red", line_width=5, render_lines_as_tubes=True)
 
-        modelNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLModelNode")
-        modelNode.SetName(name)
-        modelNode.CreateDefaultDisplayNodes()
-        modelNode.SetAndObservePolyData(mesh)
-    instrumentModel = slicer.util.getNode('needle')
-    instrumentModel.GetDisplayNode().SetOpacity(0.0)
+modelNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLModelNode")
+modelNode.SetName("needle")
+modelNode.CreateDefaultDisplayNodes()
+modelNode.SetAndObservePolyData(mesh)
 
-    needle_positions_quat=rootNode.solverNode.needle.rigidBase.cosseratInSofaFrameNode.FramesMO.position.array()
-    needle_positions_write = needle_positions_quat[:, :3]
-    needle_positions = copy.deepcopy(needle_positions_write)
-    for i in range(16):
-        needle_positions[i][1]+= needle_positions[i][0]*0.01
+#Create the visualization of the cube
+faces = np.zeros((cube_points.shape[0], 4), dtype=np.uint64)
+faces[:, 1:] = cube_points
+faces[:, 0] = 3
+mesh = pv.PolyData(cube_positions, faces)
+plotter.add_mesh(mesh, color="red", opacity=0.5, show_edges=True, lighting=True)
+
+modelNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLModelNode")
+modelNode.SetName("cube")
+modelNode.CreateDefaultDisplayNodes()
+modelNode.SetAndObservePolyData(mesh)
+instrumentModel = slicer.util.getNode('needle')   
+# instrumentModel.GetDisplayNode().SetOpacity(0.0)
     
 
 def imageDeformation_optimized(deformation_array, positions_array):
@@ -583,13 +368,12 @@ def timeStep():
 
     for i in range(16):
         needle_positions[i][1]+= 0.01
+
     if PYVISTA:
-        # Rebuild and deep copy new meshes with updated points
         updated_position_arrays = [cube_positions, needle_positions]
         triangle_arrays = [cube_points, needle_points]
 
         for i, (position_array, triangle_array) in enumerate(zip(updated_position_arrays, triangle_arrays)):
-            # Create a fresh PolyData
             if i == 0:  # cube: triangles
                 faces = np.zeros((triangle_array.shape[0], 4), dtype=np.uint64)
                 faces[:, 1:] = triangle_array
@@ -598,20 +382,18 @@ def timeStep():
                 faces = np.hstack([[2, a, b] for a, b in triangle_array]).astype(np.uint64)
 
             new_mesh = pv.PolyData()
-            new_mesh.points = position_array.copy()  # ensure it's a new buffer
+            new_mesh.points = position_array.copy()
             if i == 0:
                 new_mesh.faces = faces
             else:
                 new_mesh.lines = faces
-
-            # Update the plotter mesh in-place to avoid memory corruption
             plotter.meshes[i].deep_copy(new_mesh)
         
     slicer.app.processEvents() 
     point_position = rootNode.FemNode.gelNode.tetras.position.array().copy() 
     point_rest_position = rootNode.FemNode.gelNode.tetras.rest_position.array().copy()
     deformation_field = point_position - point_rest_position
-    imageDeformation_optimized(deformation_field, point_position)
+    # imageDeformation_optimized(deformation_field, point_position)
     if simulating:
         qt.QTimer.singleShot(100, timeStep)
     
