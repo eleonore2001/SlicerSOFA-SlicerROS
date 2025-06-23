@@ -1,7 +1,7 @@
 
 ## SlicerSOFA and Slicer ROS2 integration
 
- This repository contains 2 projects that demonstrate the pertinence and feasibility of the integration of 2 Slicer 3D extensions
+ This repository contains 2 projects that demonstrate the pertinence and feasibility of the integration of 2 Slicer 3D extensions. The base of these projects is a script developped by Steve Pieper.
 
 - The first one is the Slicer SOFA extension, developped by Rafael Palomar that enables the user to visualize object ( here, organs) deform according to physical constraints (here, the tip of a robot).
 - The second one is the Slicer ROS2 extension, developped by Laura Connoly,Aravind S. Kumar and Anton Deguet.
