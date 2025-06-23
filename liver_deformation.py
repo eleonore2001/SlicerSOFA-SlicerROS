@@ -34,6 +34,9 @@ if PYVISTA:
     except ModuleNotFoundError:
         PYVISTA = False
 
+
+#How this works : a stl file of the tip of the robot interacts directly with the liver (via the SOFA extension). To make this tip follow the movement of the robot, I applied to it the transformation wrist to tip (via the ROS extension). This way the
+#"SOFA" tip interacts with the liver following the movement of my Phantom Omni tip.
 # Create a root node
 root = Sofa.Core.Node("root")
 
