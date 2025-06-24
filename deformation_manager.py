@@ -27,7 +27,7 @@ class DeformationManager:
         self.vectors = vtk.vtkFloatArray()
         self.vectors.SetNumberOfComponents(3)
         self.vectors.SetName("Displacement")
-        
+
         num_points = initial_deformation_array.shape[0]
         
         #Fill the vtk type data
