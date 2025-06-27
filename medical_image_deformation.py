@@ -5,18 +5,6 @@ Cosserat Needle Simulation with Deformable Volume Interaction
 This module implements a SOFA-based simulation of a Cosserat needle interacting
 with a deformable FEM volume, integrated with 3D Slicer for visualization.
 
-Dependencies:
-- SOFA Framework
-- 3D Slicer
-- SlicerSOFA extension
-- PyVista (optional, for enhanced visualization)
-- NumPy
-- VTK
-
-Author: [Eleonore Germond]
-License: [MIT]
-
-Based on the work done with SofaPython. See POEMapping.py
 """
 import numpy as np
 from pathlib import Path
